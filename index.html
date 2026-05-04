@@ -1260,7 +1260,7 @@ footer {
 </footer>
 
 <script>
-// ═══ GLOBAL FOG OVERLAY ═══
+// ═══ GLOBAL FOG OVERLAY — след остаётся навсегда ═══
 (function() {
   var overlay = document.getElementById('fogOverlay');
   var canvas  = document.getElementById('fogCanvas');
@@ -1269,38 +1269,51 @@ footer {
   var ctx     = canvas.getContext('2d');
 
   var W, H;
-  var mouse = { x: -999, y: -999 };
-  var active = false;
+  var mouse    = { x: -999, y: -999 };
+  var prevMouse = { x: -999, y: -999 };
+  var active   = false;
   var hintGone = false;
-  var totalCleared = 0;   // track how much has been revealed
-  var DONE = false;       // fog fully dismissed
+  var DONE     = false;
+  var totalCleared = 0;
 
-  // ── Lilac fog color ──
+  // ── Параметры ──
   var FOG_R = 195, FOG_G = 175, FOG_B = 225;
-  var BRUSH      = 130;   // cursor radius
-  var REFILL     = 0.012; // how fast fog creeps back
-  var DISMISS_AT = 0.35;  // clear 35% of screen → fog fades out entirely
+  var BRUSH      = 100;   // радиус кисти
+  var DISMISS_AT = 0.55;  // 55% расчищено → туман уходит совсем
 
   function fogColor(a) {
     return 'rgba(' + FOG_R + ',' + FOG_G + ',' + FOG_B + ',' + a + ')';
   }
 
   function resize() {
+    // Сохраняем содержимое canvas при ресайзе
+    var img = ctx.getImageData(0, 0, W || 1, H || 1);
     W = canvas.width  = window.innerWidth;
     H = canvas.height = window.innerHeight;
-    if (!DONE) fillFog(1);
-  }
-
-  function fillFog(a) {
-    ctx.fillStyle = fogColor(a);
+    // Заполняем туманом при первой загрузке
+    ctx.fillStyle = fogColor(1);
     ctx.fillRect(0, 0, W, H);
+    totalCleared = 0;
   }
 
-  function clearAround(x, y) {
+  // Стираем туман по пути — непрерывная линия между prev и current
+  function clearPath(x1, y1, x2, y2) {
+    var dist = Math.sqrt((x2-x1)*(x2-x1) + (y2-y1)*(y2-y1));
+    var steps = Math.max(1, Math.floor(dist / 4));
+
+    for (var i = 0; i <= steps; i++) {
+      var t = steps === 0 ? 0 : i / steps;
+      var x = x1 + (x2 - x1) * t;
+      var y = y1 + (y2 - y1) * t;
+      clearSpot(x, y);
+    }
+  }
+
+  function clearSpot(x, y) {
     var grad = ctx.createRadialGradient(x, y, 0, x, y, BRUSH);
-    grad.addColorStop(0,    'rgba(0,0,0,0.45)');
-    grad.addColorStop(0.35, 'rgba(0,0,0,0.28)');
-    grad.addColorStop(0.65, 'rgba(0,0,0,0.10)');
+    grad.addColorStop(0,    'rgba(0,0,0,1)');
+    grad.addColorStop(0.5,  'rgba(0,0,0,0.85)');
+    grad.addColorStop(0.8,  'rgba(0,0,0,0.4)');
     grad.addColorStop(1,    'rgba(0,0,0,0)');
     ctx.globalCompositeOperation = 'destination-out';
     ctx.fillStyle = grad;
@@ -1308,91 +1321,98 @@ footer {
     ctx.arc(x, y, BRUSH, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalCompositeOperation = 'source-over';
-    totalCleared += BRUSH * BRUSH * Math.PI;
   }
 
-  // Check if enough cleared → dismiss entirely
-  function checkDismiss() {
-    var screenArea = W * H;
-    if (totalCleared > screenArea * DISMISS_AT) {
+  function countCleared() {
+    // Считаем расчищенные пиксели раз в секунду
+    var data = ctx.getImageData(0, 0, W, H).data;
+    var cleared = 0;
+    for (var i = 3; i < data.length; i += 16) { // каждый 4й пиксель
+      if (data[i] < 128) cleared++;
+    }
+    totalCleared = cleared / (data.length / 64);
+    if (totalCleared > W * H * DISMISS_AT / 100) {
       dismissFog();
     }
   }
 
-  var dismissAlpha = 1;
+  var countTimer = null;
+  function scheduleCount() {
+    if (countTimer) return;
+    countTimer = setTimeout(function() {
+      countTimer = null;
+      if (!DONE) countCleared();
+    }, 800);
+  }
+
   function dismissFog() {
     if (DONE) return;
     DONE = true;
-    overlay.style.transition = 'opacity 1.2s ease';
+    overlay.style.transition = 'opacity 1.4s ease';
     overlay.style.opacity = '0';
-    setTimeout(function() {
-      overlay.style.display = 'none';
-    }, 1300);
+    setTimeout(function() { overlay.style.display = 'none'; }, 1500);
     cursor.classList.remove('visible');
   }
 
-  var raf;
-  function loop() {
-    if (DONE) return;
-    fillFog(REFILL);
-    if (active && mouse.x > 0) {
-      clearAround(mouse.x, mouse.y);
-      checkDismiss();
-    }
-    requestAnimationFrame(loop);
-  }
+  // ── Основной цикл — только рисуем, ничего не затягиваем ──
+  var lastX = -999, lastY = -999;
 
-  // ── Mouse ──
-  document.addEventListener('mousemove', function(e) {
+  function onMove(x, y) {
     if (DONE) return;
-    mouse.x = e.clientX;
-    mouse.y = e.clientY;
-    active = true;
-
-    cursor.style.left = e.clientX + 'px';
-    cursor.style.top  = e.clientY + 'px';
-    cursor.classList.add('visible');
 
     if (!hintGone) {
       hint.classList.add('hidden');
       hintGone = true;
     }
+
+    if (lastX > 0) {
+      clearPath(lastX, lastY, x, y);
+    } else {
+      clearSpot(x, y);
+    }
+
+    lastX = x; lastY = y;
+    scheduleCount();
+
+    cursor.style.left = x + 'px';
+    cursor.style.top  = y + 'px';
+  }
+
+  // ── Mouse ──
+  document.addEventListener('mousemove', function(e) {
+    if (DONE) return;
+    cursor.classList.add('visible');
+    onMove(e.clientX, e.clientY);
   });
 
   document.addEventListener('mouseleave', function() {
-    active = false;
+    lastX = -999; lastY = -999;
     cursor.classList.remove('visible');
   });
 
   // ── Touch ──
   document.addEventListener('touchstart', function(e) {
     if (DONE) return;
-    if (!hintGone) { hint.classList.add('hidden'); hintGone = true; }
     var t = e.touches[0];
-    mouse.x = t.clientX; mouse.y = t.clientY;
-    active = true;
+    lastX = -999; lastY = -999;
+    onMove(t.clientX, t.clientY);
   }, { passive: true });
 
   document.addEventListener('touchmove', function(e) {
     if (DONE) return;
     var t = e.touches[0];
-    mouse.x = t.clientX; mouse.y = t.clientY;
-    active = true;
-    checkDismiss();
+    onMove(t.clientX, t.clientY);
   }, { passive: true });
 
   document.addEventListener('touchend', function() {
-    active = false;
+    lastX = -999; lastY = -999;
   });
 
-  // ── Click anywhere to skip fog ──
-  overlay.addEventListener('click', function() {
-    dismissFog();
-  });
+  // ── Клик — пропустить туман ──
+  overlay.addEventListener('click', dismissFog);
 
   resize();
   window.addEventListener('resize', resize);
-  loop();
 })();
 </script>
 
