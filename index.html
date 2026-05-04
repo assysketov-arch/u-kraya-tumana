@@ -1260,7 +1260,7 @@ footer {
 </footer>
 
 <script>
-// ═══ GLOBAL FOG OVERLAY — след остаётся навсегда ═══
+// ═══ GLOBAL FOG — привязан к документу, не к экрану ═══
 (function() {
   var overlay = document.getElementById('fogOverlay');
   var canvas  = document.getElementById('fogCanvas');
@@ -1269,80 +1269,122 @@ footer {
   var ctx     = canvas.getContext('2d');
 
   var W, H;
-  var mouse    = { x: -999, y: -999 };
-  var prevMouse = { x: -999, y: -999 };
-  var active   = false;
-  var hintGone = false;
   var DONE     = false;
-  var totalCleared = 0;
+  var hintGone = false;
+
+  // Все расчищенные точки в координатах документа
+  var clearedPoints = [];
+  var lastDocX = -999, lastDocY = -999;
+  var needsRender = false;
 
   // ── Параметры ──
   var FOG_R = 195, FOG_G = 175, FOG_B = 225;
-  var BRUSH      = 100;   // радиус кисти
-  var DISMISS_AT = 0.55;  // 55% расчищено → туман уходит совсем
+  var BRUSH      = 100;
+  var STEP       = 5;     // минимальное расстояние между точками при записи
+  var DISMISS_AT = 0.55;  // доля экрана → туман исчезает
 
   function fogColor(a) {
     return 'rgba(' + FOG_R + ',' + FOG_G + ',' + FOG_B + ',' + a + ')';
   }
 
   function resize() {
-    // Сохраняем содержимое canvas при ресайзе
-    var img = ctx.getImageData(0, 0, W || 1, H || 1);
     W = canvas.width  = window.innerWidth;
     H = canvas.height = window.innerHeight;
-    // Заполняем туманом при первой загрузке
+    needsRender = true;
+  }
+
+  // ── Рендер: заливаем туман, вычитаем все видимые расчищенные точки ──
+  function render() {
+    var scrollY = window.scrollY || window.pageYOffset;
+
+    // Заливаем весь canvas туманом
     ctx.fillStyle = fogColor(1);
     ctx.fillRect(0, 0, W, H);
-    totalCleared = 0;
-  }
 
-  // Стираем туман по пути — непрерывная линия между prev и current
-  function clearPath(x1, y1, x2, y2) {
-    var dist = Math.sqrt((x2-x1)*(x2-x1) + (y2-y1)*(y2-y1));
-    var steps = Math.max(1, Math.floor(dist / 4));
+    if (clearedPoints.length === 0) return;
 
-    for (var i = 0; i <= steps; i++) {
-      var t = steps === 0 ? 0 : i / steps;
-      var x = x1 + (x2 - x1) * t;
-      var y = y1 + (y2 - y1) * t;
-      clearSpot(x, y);
-    }
-  }
-
-  function clearSpot(x, y) {
-    var grad = ctx.createRadialGradient(x, y, 0, x, y, BRUSH);
-    grad.addColorStop(0,    'rgba(0,0,0,1)');
-    grad.addColorStop(0.5,  'rgba(0,0,0,0.85)');
-    grad.addColorStop(0.8,  'rgba(0,0,0,0.4)');
-    grad.addColorStop(1,    'rgba(0,0,0,0)');
+    // Вычитаем расчищенные точки которые попадают в текущий viewport
     ctx.globalCompositeOperation = 'destination-out';
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(x, y, BRUSH, 0, Math.PI * 2);
-    ctx.fill();
+
+    for (var i = 0; i < clearedPoints.length; i++) {
+      var p = clearedPoints[i];
+      var screenY = p.y - scrollY;
+
+      // Рендерим только точки в зоне видимости + буфер
+      if (screenY < -BRUSH || screenY > H + BRUSH) continue;
+
+      var grad = ctx.createRadialGradient(p.x, screenY, 0, p.x, screenY, BRUSH);
+      grad.addColorStop(0,   'rgba(0,0,0,1)');
+      grad.addColorStop(0.5, 'rgba(0,0,0,0.85)');
+      grad.addColorStop(0.8, 'rgba(0,0,0,0.4)');
+      grad.addColorStop(1,   'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(p.x, screenY, BRUSH, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     ctx.globalCompositeOperation = 'source-over';
   }
 
-  function countCleared() {
-    // Считаем расчищенные пиксели раз в секунду
-    var data = ctx.getImageData(0, 0, W, H).data;
-    var cleared = 0;
-    for (var i = 3; i < data.length; i += 16) { // каждый 4й пиксель
-      if (data[i] < 128) cleared++;
+  // ── Анимационный цикл — рендерим только когда нужно ──
+  function loop() {
+    if (needsRender) {
+      render();
+      needsRender = false;
     }
-    totalCleared = cleared / (data.length / 64);
-    if (totalCleared > W * H * DISMISS_AT / 100) {
-      dismissFog();
-    }
+    requestAnimationFrame(loop);
   }
 
-  var countTimer = null;
-  function scheduleCount() {
-    if (countTimer) return;
-    countTimer = setTimeout(function() {
-      countTimer = null;
-      if (!DONE) countCleared();
-    }, 800);
+  // ── Добавить точки по пути от предыдущей до текущей ──
+  function addPath(docX, docY) {
+    if (lastDocX < 0) {
+      clearedPoints.push({ x: docX, y: docY });
+    } else {
+      var dx = docX - lastDocX;
+      var dy = docY - lastDocY;
+      var dist = Math.sqrt(dx*dx + dy*dy);
+      var steps = Math.max(1, Math.floor(dist / STEP));
+      for (var i = 1; i <= steps; i++) {
+        var t = i / steps;
+        clearedPoints.push({
+          x: lastDocX + dx * t,
+          y: lastDocY + dy * t
+        });
+      }
+    }
+    lastDocX = docX;
+    lastDocY = docY;
+    needsRender = true;
+  }
+
+  // ── Проверка — достаточно расчищено в текущем viewport ──
+  var dismissTimer = null;
+  function checkDismiss() {
+    if (DONE) return;
+    if (dismissTimer) return;
+    dismissTimer = setTimeout(function() {
+      dismissTimer = null;
+      if (DONE) return;
+
+      // Считаем точки в текущем viewport
+      var scrollY = window.scrollY || window.pageYOffset;
+      var inView = 0;
+      for (var i = 0; i < clearedPoints.length; i++) {
+        var p = clearedPoints[i];
+        var sy = p.y - scrollY;
+        if (sy > -BRUSH && sy < H + BRUSH) inView++;
+      }
+
+      // Площадь одной точки
+      var pointArea = BRUSH * BRUSH * Math.PI;
+      var screenArea = W * H;
+      var estimatedCleared = inView * pointArea * 0.4; // поправка на перекрытие
+
+      if (estimatedCleared > screenArea * DISMISS_AT) {
+        dismissFog();
+      }
+    }, 600);
   }
 
   function dismissFog() {
@@ -1354,65 +1396,68 @@ footer {
     cursor.classList.remove('visible');
   }
 
-  // ── Основной цикл — только рисуем, ничего не затягиваем ──
-  var lastX = -999, lastY = -999;
-
-  function onMove(x, y) {
-    if (DONE) return;
-
+  function hideHint() {
     if (!hintGone) {
       hint.classList.add('hidden');
       hintGone = true;
     }
-
-    if (lastX > 0) {
-      clearPath(lastX, lastY, x, y);
-    } else {
-      clearSpot(x, y);
-    }
-
-    lastX = x; lastY = y;
-    scheduleCount();
-
-    cursor.style.left = x + 'px';
-    cursor.style.top  = y + 'px';
   }
 
   // ── Mouse ──
   document.addEventListener('mousemove', function(e) {
     if (DONE) return;
+    hideHint();
     cursor.classList.add('visible');
-    onMove(e.clientX, e.clientY);
+    cursor.style.left = e.clientX + 'px';
+    cursor.style.top  = e.clientY + 'px';
+
+    var scrollY = window.scrollY || window.pageYOffset;
+    addPath(e.clientX, e.clientY + scrollY);
+    checkDismiss();
   });
 
   document.addEventListener('mouseleave', function() {
-    lastX = -999; lastY = -999;
+    lastDocX = -999; lastDocY = -999;
     cursor.classList.remove('visible');
   });
+
+  // ── Scroll — перерисовываем туман для новой позиции ──
+  window.addEventListener('scroll', function() {
+    if (DONE) return;
+    needsRender = true;
+  }, { passive: true });
 
   // ── Touch ──
   document.addEventListener('touchstart', function(e) {
     if (DONE) return;
+    hideHint();
+    lastDocX = -999; lastDocY = -999;
     var t = e.touches[0];
-    lastX = -999; lastY = -999;
-    onMove(t.clientX, t.clientY);
+    var scrollY = window.scrollY || window.pageYOffset;
+    addPath(t.clientX, t.clientY + scrollY);
   }, { passive: true });
 
   document.addEventListener('touchmove', function(e) {
     if (DONE) return;
     var t = e.touches[0];
-    onMove(t.clientX, t.clientY);
+    var scrollY = window.scrollY || window.pageYOffset;
+    addPath(t.clientX, t.clientY + scrollY);
+    checkDismiss();
   }, { passive: true });
 
   document.addEventListener('touchend', function() {
-    lastX = -999; lastY = -999;
+    lastDocX = -999; lastDocY = -999;
   });
 
-  // ── Клик — пропустить туман ──
+  // ── Клик — пропустить ──
   overlay.addEventListener('click', dismissFog);
 
   resize();
-  window.addEventListener('resize', resize);
+  window.addEventListener('resize', function() {
+    resize();
+    needsRender = true;
+  });
+  loop();
 })();
 </script>
 
