@@ -1358,7 +1358,7 @@ footer {
     needsRender = true;
   }
 
-  // ── Проверка — достаточно расчищено в текущем viewport ──
+  // ── Проверка через реальный замер пикселей ──
   var dismissTimer = null;
   function checkDismiss() {
     if (DONE) return;
@@ -1367,24 +1367,19 @@ footer {
       dismissTimer = null;
       if (DONE) return;
 
-      // Считаем точки в текущем viewport
-      var scrollY = window.scrollY || window.pageYOffset;
-      var inView = 0;
-      for (var i = 0; i < clearedPoints.length; i++) {
-        var p = clearedPoints[i];
-        var sy = p.y - scrollY;
-        if (sy > -BRUSH && sy < H + BRUSH) inView++;
+      // Сэмплируем каждый 4й пиксель canvas
+      var data = ctx.getImageData(0, 0, W, H).data;
+      var cleared = 0;
+      var total   = 0;
+      for (var i = 3; i < data.length; i += 16) {
+        if (data[i] < 64) cleared++;
+        total++;
       }
 
-      // Площадь одной точки
-      var pointArea = BRUSH * BRUSH * Math.PI;
-      var screenArea = W * H;
-      var estimatedCleared = inView * pointArea * 0.4; // поправка на перекрытие
-
-      if (estimatedCleared > screenArea * DISMISS_AT) {
+      if (cleared / total > DISMISS_AT) {
         dismissFog();
       }
-    }, 600);
+    }, 800);
   }
 
   function dismissFog() {
