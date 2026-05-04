@@ -526,96 +526,82 @@ footer {
   color: var(--ink-muted);
 }
 
-/* ─────── Fog reveal section ─────── */
-.fog-section {
-  position: relative;
-  padding: 0;
-  overflow: hidden;
-  background: var(--bg-soft);
+/* ─────── GLOBAL FOG OVERLAY ─────── */
+#fogOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: all;
   cursor: none;
 }
 
-.fog-text-layer {
-  position: relative;
-  z-index: 1;
-  padding: 100px 0;
+#fogCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#fogHint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   text-align: center;
   pointer-events: none;
+  transition: opacity 1s ease;
   user-select: none;
 }
 
-.fog-text-layer .fog-label {
-  font-family: 'Onest', sans-serif;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.22em;
-  color: var(--accent-honey);
-  margin-bottom: 40px;
-  opacity: 0.8;
+#fogHint .hint-icon {
+  font-size: 40px;
+  display: block;
+  margin-bottom: 20px;
+  animation: hintPulse 2s ease-in-out infinite;
 }
 
-.fog-text-layer blockquote {
-  font-family: 'Cormorant Garamond', serif;
-  font-size: clamp(24px, 3.5vw, 42px);
-  font-style: italic;
+@keyframes hintPulse {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50%       { transform: scale(1.15); opacity: 1; }
+}
+
+#fogHint .hint-main {
+  font-family: 'Lora', serif;
+  font-size: clamp(22px, 3vw, 34px);
   font-weight: 400;
-  line-height: 1.45;
-  color: var(--ink);
-  max-width: 860px;
-  margin: 0 auto 36px;
-  padding: 0 32px;
+  color: #2a1a4a;
+  margin-bottom: 12px;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
 }
 
-.fog-text-layer blockquote em {
-  color: var(--accent-honey);
-  font-style: normal;
-}
-
-.fog-text-layer .fog-attr {
-  font-family: 'Onest', sans-serif;
-  font-size: 13px;
-  color: var(--ink-muted);
-  letter-spacing: 0.1em;
-}
-
-.fog-canvas {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  pointer-events: none;
-}
-
-.fog-hint {
-  position: absolute;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 3;
+#fogHint .hint-sub {
   font-family: 'Cormorant Garamond', serif;
   font-style: italic;
-  font-size: 15px;
-  color: var(--ink-muted);
-  pointer-events: none;
-  transition: opacity 0.8s ease;
-  white-space: nowrap;
+  font-size: clamp(16px, 2vw, 20px);
+  color: rgba(42, 26, 74, 0.65);
+  letter-spacing: 0.02em;
 }
 
-.fog-hint.hidden { opacity: 0; }
+#fogHint.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
 
-.fog-cursor {
+#fogCursor {
   position: fixed;
-  width: 16px;
-  height: 16px;
-  border: 1px solid var(--accent-honey);
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid rgba(42, 26, 74, 0.5);
   border-radius: 50%;
   pointer-events: none;
-  z-index: 9999;
+  z-index: 10000;
   transform: translate(-50%, -50%);
-  transition: transform 0.15s ease, width 0.2s ease, height 0.2s ease;
-  opacity: 0;
+  transition: width 0.2s, height 0.2s;
+  display: none;
 }
 
-.fog-cursor.active { opacity: 0.7; }
+#fogCursor.visible { display: block; }
 
 /* ─────── Ways of knowing — interactive section ─────── */
 .ways {
@@ -855,6 +841,17 @@ footer {
 </head>
 <body>
 
+<!-- ═══ GLOBAL FOG OVERLAY ═══ -->
+<div id="fogOverlay">
+  <canvas id="fogCanvas"></canvas>
+  <div id="fogHint">
+    <span class="hint-icon">☁</span>
+    <div class="hint-main">Здесь живёт туман</div>
+    <div class="hint-sub">Проведи курсором — и он расступится</div>
+  </div>
+</div>
+<div id="fogCursor"></div>
+
 <header>
   <div class="container header-inner">
     <a href="index.html" class="logo">
@@ -892,25 +889,6 @@ footer {
     <div class="hero-line"></div>
   </div>
 </section>
-
-<!-- ═══ FOG REVEAL ═══ -->
-<div class="fog-section" id="fogSection">
-  <div class="fog-text-layer">
-    <div class="fog-label">— проведи курсором —</div>
-    <blockquote>
-      Туман не скрывает мир.<br>
-      Туман <em>и есть</em> мир —<br>
-      тот, что открывается<br>
-      только тому, кто движется.
-    </blockquote>
-    <div class="fog-attr">У края тумана · Санкт-Петербург</div>
-  </div>
-  <canvas class="fog-canvas" id="fogCanvas"></canvas>
-  <div class="fog-hint" id="fogHint">проведи курсором, чтобы рассеять туман</div>
-</div>
-
-<!-- Custom cursor for fog section -->
-<div class="fog-cursor" id="fogCursor"></div>
 
 <section id="about">
   <div class="container">
@@ -1282,92 +1260,134 @@ footer {
 </footer>
 
 <script>
-// ═══ FOG REVEAL ═══
+// ═══ GLOBAL FOG OVERLAY ═══
 (function() {
-  var section = document.getElementById('fogSection');
+  var overlay = document.getElementById('fogOverlay');
   var canvas  = document.getElementById('fogCanvas');
   var hint    = document.getElementById('fogHint');
   var cursor  = document.getElementById('fogCursor');
-  if (!section || !canvas) return;
-  var ctx = canvas.getContext('2d');
+  var ctx     = canvas.getContext('2d');
 
   var W, H;
   var mouse = { x: -999, y: -999 };
-  var isOver = false;
-  var hintHidden = false;
+  var active = false;
+  var hintGone = false;
+  var totalCleared = 0;   // track how much has been revealed
+  var DONE = false;       // fog fully dismissed
 
-  var BRUSH_RADIUS = 120;
-  var REFILL_ALPHA = 0.016;
-  var FOG_COLOR    = 'rgba(235, 231, 223, ';
+  // ── Lilac fog color ──
+  var FOG_R = 195, FOG_G = 175, FOG_B = 225;
+  var BRUSH      = 130;   // cursor radius
+  var REFILL     = 0.012; // how fast fog creeps back
+  var DISMISS_AT = 0.35;  // clear 35% of screen → fog fades out entirely
 
-  function resize() {
-    W = canvas.width  = section.offsetWidth;
-    H = canvas.height = section.offsetHeight;
-    drawFog(1);
+  function fogColor(a) {
+    return 'rgba(' + FOG_R + ',' + FOG_G + ',' + FOG_B + ',' + a + ')';
   }
 
-  function drawFog(alpha) {
-    ctx.fillStyle = FOG_COLOR + alpha + ')';
+  function resize() {
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+    if (!DONE) fillFog(1);
+  }
+
+  function fillFog(a) {
+    ctx.fillStyle = fogColor(a);
     ctx.fillRect(0, 0, W, H);
   }
 
   function clearAround(x, y) {
-    var grad = ctx.createRadialGradient(x, y, 0, x, y, BRUSH_RADIUS);
-    grad.addColorStop(0,    'rgba(0,0,0,0.40)');
-    grad.addColorStop(0.40, 'rgba(0,0,0,0.25)');
-    grad.addColorStop(0.70, 'rgba(0,0,0,0.08)');
+    var grad = ctx.createRadialGradient(x, y, 0, x, y, BRUSH);
+    grad.addColorStop(0,    'rgba(0,0,0,0.45)');
+    grad.addColorStop(0.35, 'rgba(0,0,0,0.28)');
+    grad.addColorStop(0.65, 'rgba(0,0,0,0.10)');
     grad.addColorStop(1,    'rgba(0,0,0,0)');
     ctx.globalCompositeOperation = 'destination-out';
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.arc(x, y, BRUSH_RADIUS, 0, Math.PI * 2);
+    ctx.arc(x, y, BRUSH, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalCompositeOperation = 'source-over';
+    totalCleared += BRUSH * BRUSH * Math.PI;
   }
 
+  // Check if enough cleared → dismiss entirely
+  function checkDismiss() {
+    var screenArea = W * H;
+    if (totalCleared > screenArea * DISMISS_AT) {
+      dismissFog();
+    }
+  }
+
+  var dismissAlpha = 1;
+  function dismissFog() {
+    if (DONE) return;
+    DONE = true;
+    overlay.style.transition = 'opacity 1.2s ease';
+    overlay.style.opacity = '0';
+    setTimeout(function() {
+      overlay.style.display = 'none';
+    }, 1300);
+    cursor.classList.remove('visible');
+  }
+
+  var raf;
   function loop() {
-    drawFog(REFILL_ALPHA);
-    if (isOver && mouse.x > 0) clearAround(mouse.x, mouse.y);
+    if (DONE) return;
+    fillFog(REFILL);
+    if (active && mouse.x > 0) {
+      clearAround(mouse.x, mouse.y);
+      checkDismiss();
+    }
     requestAnimationFrame(loop);
   }
 
-  function localCoords(e) {
-    var rect = section.getBoundingClientRect();
-    var cx = e.touches ? e.touches[0].clientX : e.clientX;
-    var cy = e.touches ? e.touches[0].clientY : e.clientY;
-    return { x: cx - rect.left, y: cy - rect.top };
-  }
+  // ── Mouse ──
+  document.addEventListener('mousemove', function(e) {
+    if (DONE) return;
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+    active = true;
 
-  section.addEventListener('mouseenter', function() {
-    isOver = true;
-    cursor.classList.add('active');
-    if (!hintHidden) { hint.classList.add('hidden'); hintHidden = true; }
-  });
-
-  section.addEventListener('mouseleave', function() {
-    isOver = false; mouse.x = -999;
-    cursor.classList.remove('active');
-  });
-
-  section.addEventListener('mousemove', function(e) {
-    var p = localCoords(e);
-    mouse.x = p.x; mouse.y = p.y;
     cursor.style.left = e.clientX + 'px';
     cursor.style.top  = e.clientY + 'px';
+    cursor.classList.add('visible');
+
+    if (!hintGone) {
+      hint.classList.add('hidden');
+      hintGone = true;
+    }
   });
 
-  section.addEventListener('touchstart', function() {
-    isOver = true;
-    if (!hintHidden) { hint.classList.add('hidden'); hintHidden = true; }
+  document.addEventListener('mouseleave', function() {
+    active = false;
+    cursor.classList.remove('visible');
+  });
+
+  // ── Touch ──
+  document.addEventListener('touchstart', function(e) {
+    if (DONE) return;
+    if (!hintGone) { hint.classList.add('hidden'); hintGone = true; }
+    var t = e.touches[0];
+    mouse.x = t.clientX; mouse.y = t.clientY;
+    active = true;
   }, { passive: true });
 
-  section.addEventListener('touchmove', function(e) {
-    var p = localCoords(e);
-    mouse.x = p.x; mouse.y = p.y;
+  document.addEventListener('touchmove', function(e) {
+    if (DONE) return;
+    var t = e.touches[0];
+    mouse.x = t.clientX; mouse.y = t.clientY;
+    active = true;
+    checkDismiss();
   }, { passive: true });
 
-  section.addEventListener('touchend', function() {
-    isOver = false;
+  document.addEventListener('touchend', function() {
+    active = false;
+  });
+
+  // ── Click anywhere to skip fog ──
+  overlay.addEventListener('click', function() {
+    dismissFog();
   });
 
   resize();
