@@ -1260,7 +1260,7 @@ footer {
 </footer>
 
 <script>
-// ═══ GLOBAL FOG — привязан к документу, не к экрану ═══
+// ═══ GLOBAL FOG — оптимизированная версия ═══
 (function() {
   var overlay = document.getElementById('fogOverlay');
   var canvas  = document.getElementById('fogCanvas');
@@ -1272,16 +1272,17 @@ footer {
   var DONE     = false;
   var hintGone = false;
 
-  // Все расчищенные точки в координатах документа
-  var clearedPoints = [];
-  var lastDocX = -999, lastDocY = -999;
-  var needsRender = false;
+  var strokes   = [];
+  var curStroke = null;
+  var needRender = false;
 
-  // ── Параметры ──
   var FOG_R = 195, FOG_G = 175, FOG_B = 225;
-  var BRUSH      = 100;
-  var STEP       = 5;     // минимальное расстояние между точками при записи
-  var DISMISS_AT = 0.55;  // доля экрана → туман исчезает
+  var BRUSH      = 90;
+  var BLUR_PX    = 28;
+  var STEP       = 6;
+  var DISMISS_AT = 0.30;
+  var CELL       = 55;
+  var visitedCells = {};
 
   function fogColor(a) {
     return 'rgba(' + FOG_R + ',' + FOG_G + ',' + FOG_B + ',' + a + ')';
@@ -1290,169 +1291,194 @@ footer {
   function resize() {
     W = canvas.width  = window.innerWidth;
     H = canvas.height = window.innerHeight;
-    needsRender = true;
+    visitedCells = {};
+    needRender = true;
   }
 
-  // ── Рендер: заливаем туман, вычитаем все видимые расчищенные точки ──
   function render() {
     var scrollY = window.scrollY || window.pageYOffset;
-
-    // Заливаем весь canvas туманом
     ctx.fillStyle = fogColor(1);
     ctx.fillRect(0, 0, W, H);
-
-    if (clearedPoints.length === 0) return;
-
-    // Вычитаем расчищенные точки которые попадают в текущий viewport
+    if (strokes.length === 0) return;
+    ctx.save();
     ctx.globalCompositeOperation = 'destination-out';
-
-    for (var i = 0; i < clearedPoints.length; i++) {
-      var p = clearedPoints[i];
-      var screenY = p.y - scrollY;
-
-      // Рендерим только точки в зоне видимости + буфер
-      if (screenY < -BRUSH || screenY > H + BRUSH) continue;
-
-      var grad = ctx.createRadialGradient(p.x, screenY, 0, p.x, screenY, BRUSH);
-      grad.addColorStop(0,   'rgba(0,0,0,1)');
-      grad.addColorStop(0.5, 'rgba(0,0,0,0.85)');
-      grad.addColorStop(0.8, 'rgba(0,0,0,0.4)');
-      grad.addColorStop(1,   'rgba(0,0,0,0)');
-      ctx.fillStyle = grad;
+    ctx.filter = 'blur(' + BLUR_PX + 'px)';
+    ctx.strokeStyle = 'rgba(0,0,0,1)';
+    ctx.lineWidth   = BRUSH * 2;
+    ctx.lineCap     = 'round';
+    ctx.lineJoin    = 'round';
+    for (var s = 0; s < strokes.length; s++) {
+      var pts = strokes[s];
+      if (pts.length === 0) continue;
+      var hasVisible = false;
+      for (var k = 0; k < pts.length; k++) {
+        var sy = pts[k].y - scrollY;
+        if (sy > -BRUSH * 3 && sy < H + BRUSH * 3) { hasVisible = true; break; }
+      }
+      if (!hasVisible) continue;
       ctx.beginPath();
-      ctx.arc(p.x, screenY, BRUSH, 0, Math.PI * 2);
-      ctx.fill();
+      var started = false;
+      for (var i = 0; i < pts.length; i++) {
+        var sx  = pts[i].x;
+        var sy2 = pts[i].y - scrollY;
+        if (!started) { ctx.moveTo(sx, sy2); started = true; }
+        else           { ctx.lineTo(sx, sy2); }
+      }
+      ctx.stroke();
     }
-
-    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+    needRender = false;
   }
 
-  // ── Анимационный цикл — рендерим только когда нужно ──
   function loop() {
-    if (needsRender) {
-      render();
-      needsRender = false;
-    }
+    if (!DONE && needRender) render();
     requestAnimationFrame(loop);
   }
 
-  // ── Добавить точки по пути от предыдущей до текущей ──
-  function addPath(docX, docY) {
-    if (lastDocX < 0) {
-      clearedPoints.push({ x: docX, y: docY });
+  function addPoint(clientX, clientY) {
+    var scrollY = window.scrollY || window.pageYOffset;
+    var docX = clientX;
+    var docY = clientY + scrollY;
+    if (!curStroke) {
+      curStroke = [{ x: docX, y: docY }];
+      strokes.push(curStroke);
     } else {
-      var dx = docX - lastDocX;
-      var dy = docY - lastDocY;
-      var dist = Math.sqrt(dx*dx + dy*dy);
-      var steps = Math.max(1, Math.floor(dist / STEP));
-      for (var i = 1; i <= steps; i++) {
-        var t = i / steps;
-        clearedPoints.push({
-          x: lastDocX + dx * t,
-          y: lastDocY + dy * t
-        });
-      }
+      var last = curStroke[curStroke.length - 1];
+      var dx = docX - last.x, dy = docY - last.y;
+      if (dx * dx + dy * dy < STEP * STEP) return;
+      curStroke.push({ x: docX, y: docY });
     }
-    lastDocX = docX;
-    lastDocY = docY;
-    needsRender = true;
+    var cx = Math.floor(clientX / CELL);
+    var cy = Math.floor(clientY / CELL);
+    visitedCells[cx + '_' + cy] = true;
+    needRender = true;
+    scheduleDismissCheck();
   }
 
-  // ── Проверка через реальный замер пикселей ──
+  function endStroke() { curStroke = null; }
+
   var dismissTimer = null;
-  function checkDismiss() {
-    if (DONE) return;
-    if (dismissTimer) return;
+  function scheduleDismissCheck() {
+    if (DONE || dismissTimer) return;
     dismissTimer = setTimeout(function() {
       dismissTimer = null;
       if (DONE) return;
-
-      // Сэмплируем каждый 4й пиксель canvas
-      var data = ctx.getImageData(0, 0, W, H).data;
-      var cleared = 0;
-      var total   = 0;
-      for (var i = 3; i < data.length; i += 16) {
-        if (data[i] < 64) cleared++;
-        total++;
-      }
-
-      if (cleared / total > DISMISS_AT) {
-        dismissFog();
-      }
-    }, 800);
+      var totalCells   = Math.ceil(W / CELL) * Math.ceil(H / CELL);
+      var visitedCount = Object.keys(visitedCells).length;
+      if (visitedCount / totalCells >= DISMISS_AT) dismissFog();
+    }, 400);
   }
 
   function dismissFog() {
     if (DONE) return;
     DONE = true;
     overlay.style.transition = 'opacity 1.4s ease';
-    overlay.style.opacity = '0';
-    setTimeout(function() { overlay.style.display = 'none'; }, 1500);
+    overlay.style.opacity    = '0';
+    setTimeout(function() {
+      overlay.style.display = 'none';
+      startWisps();
+    }, 1500);
     cursor.classList.remove('visible');
   }
 
   function hideHint() {
-    if (!hintGone) {
-      hint.classList.add('hidden');
-      hintGone = true;
-    }
+    if (!hintGone) { hint.classList.add('hidden'); hintGone = true; }
   }
 
-  // ── Mouse ──
   document.addEventListener('mousemove', function(e) {
     if (DONE) return;
     hideHint();
     cursor.classList.add('visible');
     cursor.style.left = e.clientX + 'px';
     cursor.style.top  = e.clientY + 'px';
-
-    var scrollY = window.scrollY || window.pageYOffset;
-    addPath(e.clientX, e.clientY + scrollY);
-    checkDismiss();
+    addPoint(e.clientX, e.clientY);
   });
 
   document.addEventListener('mouseleave', function() {
-    lastDocX = -999; lastDocY = -999;
+    endStroke();
     cursor.classList.remove('visible');
   });
 
-  // ── Scroll — перерисовываем туман для новой позиции ──
   window.addEventListener('scroll', function() {
     if (DONE) return;
-    needsRender = true;
+    visitedCells = {};
+    endStroke();
+    needRender = true;
   }, { passive: true });
 
-  // ── Touch ──
   document.addEventListener('touchstart', function(e) {
     if (DONE) return;
     hideHint();
-    lastDocX = -999; lastDocY = -999;
+    endStroke();
     var t = e.touches[0];
-    var scrollY = window.scrollY || window.pageYOffset;
-    addPath(t.clientX, t.clientY + scrollY);
+    addPoint(t.clientX, t.clientY);
   }, { passive: true });
 
   document.addEventListener('touchmove', function(e) {
     if (DONE) return;
     var t = e.touches[0];
-    var scrollY = window.scrollY || window.pageYOffset;
-    addPath(t.clientX, t.clientY + scrollY);
-    checkDismiss();
+    addPoint(t.clientX, t.clientY);
   }, { passive: true });
 
-  document.addEventListener('touchend', function() {
-    lastDocX = -999; lastDocY = -999;
-  });
+  document.addEventListener('touchend', function() { endStroke(); });
 
-  // ── Клик — пропустить ──
   overlay.addEventListener('click', dismissFog);
 
   resize();
-  window.addEventListener('resize', function() {
-    resize();
-    needsRender = true;
-  });
+  window.addEventListener('resize', resize);
   loop();
+
+  // ══ ОСТРОВКИ ТУМАНА ══
+  function startWisps() {
+    var wc = document.createElement('canvas');
+    wc.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:50;';
+    document.body.appendChild(wc);
+    var gc = wc.getContext('2d');
+    var wW, wH;
+    function resizeWisp() { wW = wc.width = window.innerWidth; wH = wc.height = window.innerHeight; }
+    resizeWisp();
+    window.addEventListener('resize', resizeWisp);
+    var wisps = [];
+    var tick  = 0;
+    function mkWisp(frac) {
+      return {
+        x: (frac !== undefined ? frac * wW : Math.random() * wW) + (Math.random()-0.5)*80,
+        y: Math.random() * wH,
+        r: 55 + Math.random() * 90,
+        alpha: 0,
+        maxAlpha: 0.18 + Math.random() * 0.16,
+        phase: 'in', hold: 0,
+        maxHold: 80 + Math.random() * 140,
+        dx: (Math.random()-0.5)*0.25,
+        dy: (Math.random()-0.5)*0.15,
+        spd: 0.006 + Math.random()*0.005
+      };
+    }
+    [0.2, 0.55, 0.8].forEach(function(f) {
+      var w = mkWisp(f); w.alpha = w.maxAlpha * 0.5; w.phase = 'hold'; wisps.push(w);
+    });
+    function drawWisps() {
+      gc.clearRect(0, 0, wW, wH);
+      tick++;
+      if (tick % 300 === 0 && wisps.length < 5) wisps.push(mkWisp());
+      for (var i = wisps.length-1; i >= 0; i--) {
+        var w = wisps[i];
+        if      (w.phase==='in')   { w.alpha+=w.spd; if(w.alpha>=w.maxAlpha){w.alpha=w.maxAlpha;w.phase='hold';} }
+        else if (w.phase==='hold') { w.hold++;        if(w.hold>=w.maxHold) {w.phase='out';} }
+        else                       { w.alpha-=w.spd*0.6; if(w.alpha<=0){wisps.splice(i,1);continue;} }
+        w.x+=w.dx; w.y+=w.dy;
+        var g = gc.createRadialGradient(w.x,w.y,0,w.x,w.y,w.r);
+        g.addColorStop(0,   fogColor(w.alpha));
+        g.addColorStop(0.5, fogColor(w.alpha*0.55));
+        g.addColorStop(1,   fogColor(0));
+        gc.fillStyle = g;
+        gc.beginPath(); gc.arc(w.x,w.y,w.r,0,Math.PI*2); gc.fill();
+      }
+      requestAnimationFrame(drawWisps);
+    }
+    requestAnimationFrame(drawWisps);
+  }
+
 })();
 </script>
 
